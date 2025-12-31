@@ -5,10 +5,16 @@ import torchaudio
 import librosa
 import numpy as np
 import math
-from typing import List, Optional, Sequence, Union
+from typing import List, Optional, Sequence, Union, Any, Dict
 from transformers import MimiModel, AutoFeatureExtractor, HubertModel, AutoModel, Wav2Vec2FeatureExtractor
+import os
+import json
+from huggingface_hub import snapshot_download
 
-from semantic_module import Encoder, Decoder
+try:
+    from semantic_module import Encoder, Decoder
+except:
+    from .semantic_module import Encoder, Decoder
 
 
 def nonlinearity(x):
@@ -640,5 +646,186 @@ def load_mimi_upsampler(
         print("Checkpoint loaded successfully")
     
     model.to(device)
+    model.eval()
+    return model
+
+def _extract_state_dict(ckpt: Any) -> Dict[str, torch.Tensor]:
+    """
+    Handles either:
+      - full training checkpoint dict {model_state_dict, optimizer..., config...}
+      - raw state_dict
+    """
+    if isinstance(ckpt, dict):
+        if "model_state_dict" in ckpt and isinstance(ckpt["model_state_dict"], dict):
+            return ckpt["model_state_dict"]
+        # sometimes people save under "state_dict"
+        if "state_dict" in ckpt and isinstance(ckpt["state_dict"], dict):
+            return ckpt["state_dict"]
+        # could already be a plain state dict
+        # (heuristic: value tensors)
+        if all(hasattr(v, "shape") for v in ckpt.values()):
+            return ckpt
+    raise ValueError("Could not extract a model state_dict from checkpoint.")
+
+
+def _strip_prefixes(sd: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """
+    Normalizes common wrappers:
+      - DDP: 'module.'
+      - torch.compile: '_orig_mod.'
+    """
+    out = {}
+    for k, v in sd.items():
+        if k.startswith("module."):
+            k = k[len("module."):]
+        if k.startswith("_orig_mod."):
+            k = k[len("_orig_mod."):]
+        out[k] = v
+    return out
+
+
+def _load_forgiving(model: torch.nn.Module, sd: Dict[str, torch.Tensor], verbose: bool = True):
+    """
+    Loads only keys that exist AND match shape.
+    This avoids giant spam lists and protects you from config mismatches.
+    """
+    model_sd = model.state_dict()
+    loadable = {}
+    shape_mismatch = []
+    skipped = 0
+
+    for k, v in sd.items():
+        if k not in model_sd:
+            skipped += 1
+            continue
+        if tuple(v.shape) != tuple(model_sd[k].shape):
+            shape_mismatch.append((k, tuple(v.shape), tuple(model_sd[k].shape)))
+            continue
+        loadable[k] = v
+
+    missing, unexpected = model.load_state_dict(loadable, strict=False)
+
+    if verbose:
+        print("---- checkpoint load report ----")
+        print(f"keys in checkpoint:      {len(sd)}")
+        print(f"keys loadable (matched): {len(loadable)}")
+        print(f"skipped (no key):        {skipped}")
+        print(f"shape mismatches:        {len(shape_mismatch)}")
+        print(f"missing after load:      {len(missing)}")
+        print(f"unexpected after load:   {len(unexpected)}")
+        if shape_mismatch[:5]:
+            print("first few shape mismatches:")
+            for k, a, b in shape_mismatch[:5]:
+                print(f"  {k}: ckpt{a} != model{b}")
+        print("-------------------------------")
+
+    return missing, unexpected
+
+
+def prepare(
+    checkpoint_path: str,
+    config_path: Optional[str] = None,
+    device: str = "cuda",
+    compile_after_load: bool = False,
+):
+    """
+    Correct for your training setup:
+      - prefers checkpoint['config'] if present
+      - strips module/_orig_mod prefixes
+      - loads into the *raw* module (then optionally torch.compile after)
+    """
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+    # Prefer config embedded in checkpoint (most faithful to training)
+    cfg = {}
+    if isinstance(ckpt, dict) and "config" in ckpt and isinstance(ckpt["config"], dict):
+        cfg = ckpt["config"]
+        print("Using config from checkpoint['config'].")
+    elif config_path is not None:
+        with open(config_path, "r") as f:
+            cfg = json.load(f)
+        print("Using config from config_path.")
+    else:
+        raise ValueError("No config found in checkpoint and no config_path provided.")
+
+    model = MimiUpsamplerWrapper(
+        model_name=cfg.get("mimi_model_name", "kyutai/mimi"),
+        output_sample_rate=cfg.get("sample_rate", 44100),
+        encoder_sample_rate=cfg.get("encoder_sample_rate", 24000),
+        frame_rate=cfg.get("frame_rate", 12.5),
+        decoder_dim=cfg.get("decoder_dim", 1024),
+        upsample_ratio=cfg.get("upsample_ratio", None),
+        target_bandwidths=cfg.get("target_bandwidths", [1.5]),
+        semantic_teacher=cfg.get("semantic_teacher", "hubert_base_general"),
+        last_layer_semantic=cfg.get("last_layer_semantic", True),
+        downsample_mode=cfg.get("downsample_mode", "step_down"),
+        device=device,
+    ).to(device)
+
+    sd = _extract_state_dict(ckpt)
+    sd = _strip_prefixes(sd)
+
+    _load_forgiving(model, sd, verbose=True)
+
+    model.eval()
+
+    if compile_after_load:
+        # IMPORTANT: compile AFTER loading to avoid _orig_mod key hell
+        model = torch.compile(model, mode="default")
+        model.eval()
+
+    return model
+
+
+@dataclass
+class EncodedResult:
+    audio_codes: torch.Tensor  # (B, n_q, T_codes)
+    quantized: Optional[torch.Tensor] = None  # (B, hidden, T_codes) if requested
+
+@torch.no_grad()
+def encode_batch(
+    model,
+    x_batch: torch.Tensor,
+    orig_sr: Optional[int] = None,
+    return_quantized: bool = True,
+) -> EncodedResult:
+    """
+    Batch encoder for Mimi codes.
+    x_batch: (B, 1, T) or (B, T)
+    """
+    if orig_sr is None:
+        orig_sr = model.output_sample_rate
+
+    if x_batch.dim() == 2:
+        x_batch = x_batch.unsqueeze(1)
+    assert x_batch.dim() == 3, f"Expected (B,1,T) or (B,T). Got {tuple(x_batch.shape)}"
+
+    x = x_batch[:, 0, :]  # (B, T)
+
+    if orig_sr != model.encoder_sample_rate:
+        x = torchaudio.functional.resample(x, orig_sr, model.encoder_sample_rate)
+
+    x = x.unsqueeze(1)  # (B,1,T24)
+
+    enc_out = model.mimi.encode(x)
+    codes = enc_out.audio_codes  # (B,n_q,Tc)
+
+    quantized = None
+    if return_quantized:
+        quantized = model.mimi.quantizer.decode(codes)  # (B,hidden,Tc)
+
+    return EncodedResult(audio_codes=codes, quantized=quantized)
+
+
+def load_avadec_audio_tokenizer(tokenizer_name_or_path, device="cuda"):
+    is_local = os.path.exists(tokenizer_name_or_path)
+    if not is_local:
+        tokenizer_path = snapshot_download(tokenizer_name_or_path)
+    else:
+        tokenizer_path = tokenizer_name_or_path
+    config_path = os.path.join(tokenizer_path, "config.json")
+    checkpoint_path = os.path.join(tokenizer_path, "model.pth")
+    config = json.load(open(config_path))
+    model = prepare(checkpoint_path, config_path, device)
     model.eval()
     return model
