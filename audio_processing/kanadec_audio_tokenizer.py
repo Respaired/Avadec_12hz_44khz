@@ -6,6 +6,7 @@ import librosa
 import numpy as np
 import math
 from typing import List, Optional, Sequence, Union, Any, Dict
+from dataclasses import dataclass
 from transformers import MimiModel, AutoFeatureExtractor, HubertModel, AutoModel, Wav2Vec2FeatureExtractor
 import os
 import json
