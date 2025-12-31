@@ -1,0 +1,12 @@
+{
+    "mimi_model_name": "kyutai/mimi",
+    "sample_rate": 44100,
+    "encoder_sample_rate": 24000,
+    "frame_rate": 12.5,
+    "decoder_dim": 1536,
+    "upsample_ratio": [7, 7, 4, 3, 3, 2],
+    "target_bandwidths": [0.5, 1, 1.5, 2, 4],
+    "semantic_teacher": "hubert_base_general",
+    "last_layer_semantic": true,
+    "downsample_mode": "step_down"
+}
