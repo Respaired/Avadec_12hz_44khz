@@ -45,7 +45,7 @@ dac_model = load_avadec_audio_tokenizer("Respair/Avadec_12hz", device='cuda')
 
 
 device = 'cuda'
-wav, sr = librosa.load("/home/ubuntu/kanade.mp3", sr=24000)
+wav, sr = librosa.load("path_to/audio.mp3", sr=24000)
 tensor = torch.from_numpy(wav).unsqueeze(0).to(device)
 
 with torch.no_grad():
