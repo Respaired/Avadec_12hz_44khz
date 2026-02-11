@@ -50,7 +50,7 @@ tensor = torch.from_numpy(wav).unsqueeze(0).to(device)
 
 with torch.no_grad():
     encoded = encode_batch(dac_model, tensor, orig_sr=24000, return_quantized=False)
-    recon = dac_model.decode(codes.audio_codes.to(device))
+    recon = dac_model.decode(encoded.audio_codes.to(device))
     
 Sawt(recon.squeeze(), rate=44100)
 ```
