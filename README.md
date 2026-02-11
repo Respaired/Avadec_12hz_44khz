@@ -49,7 +49,7 @@ wav, sr = librosa.load("path_to/audio.mp3", sr=24000)
 tensor = torch.from_numpy(wav).unsqueeze(0).to(device)
 
 with torch.no_grad():
-    codes = encode_batch(dac_model, tensor, orig_sr=24000, return_quantized=False)
+    encoded = encode_batch(dac_model, tensor, orig_sr=24000, return_quantized=False)
     recon = dac_model.decode(codes.audio_codes.to(device))
     
 Sawt(recon.squeeze(), rate=44100)
