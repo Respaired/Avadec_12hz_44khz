@@ -22,12 +22,12 @@ language:
 
 This is a custom audio codec. <br> 
 
-The Encoder was borrowed from `kyutai/mimi` while the decoder is trained from scratch with a latent enhancer, higher sampling rate (44.1khz) and other modifications. <br>
+- The Encoder was borrowed from `kyutai/mimi` while the decoder is trained from scratch with a latent enhancer, higher sampling rate (44.1khz) and other modifications. <br>
 it should sound much better in most use cases. <br>
 
 - Backward compatible with any TTS that's trained on Mimi codes. <br>
 
-It was trained on tens of thousands of multilingual data (English, Japanese, Persian, Russian, Arabic etc.)
+- It was trained on tens of thousands of multilingual data (English, Japanese, Persian, Russian, Arabic etc.)
 
 # Inference
 
