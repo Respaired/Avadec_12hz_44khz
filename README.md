@@ -41,7 +41,7 @@ from audio_processing.kanadec_audio_tokenizer import load_avadec_audio_tokenizer
 import torch
 
 
-dac_model = load_avadec_audio_tokenizer("Respair/Avadec_12hz", device='cuda')
+dac_model = load_avadec_audio_tokenizer("Respair/Avadec_12hz_44khz", device='cuda')
 
 
 device = 'cuda'
