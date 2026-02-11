@@ -1,5 +1,5 @@
 ---
-license: mit
+license: cc-by-4.0
 base_model:
 - kyutai/mimi
 tags:
@@ -10,6 +10,12 @@ tags:
 - speech_tokenizer
 - sound
 - audio
+language:
+- en
+- fa
+- ja
+- ar
+- ru
 ---
 
 # What is this ?
