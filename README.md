@@ -20,7 +20,7 @@ language:
 
 # What is this ?
 
-This is a custom audio codec. <br> 
+This is a custom speech tokenizer. <br> 
 
 - The Encoder was borrowed from `kyutai/mimi` while the decoder is trained from scratch using a different architecrue, higher sampling rate (44.1khz) and other modifications. <br>
 it should sound much better in most use cases. <br>
